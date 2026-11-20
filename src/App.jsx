@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Zap } from 'lucide-react';
 import Navbar, { STEPS } from './components/Navbar';
 import HeroSection from './components/HeroSection';
 import Footer from './components/Footer';
