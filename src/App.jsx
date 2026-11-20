@@ -241,7 +241,7 @@ export default function App() {
       />
 
       {/* Main Workspace Section */}
-      <section ref={workspaceRef} className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-4 pb-24 md:pb-12">
+      <section ref={workspaceRef} className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-6 pt-3 pb-32 md:pb-12">
         
         {/* Direct Fast Recharge Action Banner if not recharged */}
         {!isRecharged && (

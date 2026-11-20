@@ -17,7 +17,9 @@ import {
   Send,
   CreditCard,
   Flame,
-  CheckCheck
+  CheckCheck,
+  AlertTriangle,
+  Lock
 } from 'lucide-react';
 import { 
   RECHARGE_PLANS, 
@@ -42,6 +44,7 @@ export default function PricingModal({
   const [customerName, setCustomerName] = useState(() => formData.businessName || '');
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [validationError, setValidationError] = useState('');
   const [copiedUpi, setCopiedUpi] = useState(false);
 
   useEffect(() => {
@@ -74,17 +77,33 @@ export default function PricingModal({
   const handleDirectPlanSelect = (planId) => {
     playClickPop();
     setSelectedPlanId(planId);
+    setValidationError('');
   };
 
-  // Fast 1-Click Recharge & Auto Activation
-  const handleConfirmRecharge = (planId = selectedPlanId, isFast1Click = false) => {
+  // Payment Confirmation & Verified Activation
+  const handleConfirmRecharge = (isFastAuto = false) => {
     playClickPop();
-    setIsProcessing(true);
+    setValidationError('');
     setSuccessMsg('');
 
-    const phone = customerPhone.trim() || formData.contactNumber || 'N/A';
+    const phone = customerPhone.trim() || formData.contactNumber || '';
     const bizName = customerName.trim() || formData.businessName || 'ALEXO Customer';
-    const utr = utrInput.trim() || (isFast1Click ? `FAST_UPI_${Date.now().toString().slice(-8)}` : 'Direct UPI Paid');
+    const utr = utrInput.trim();
+
+    // Strict validation: Require customer phone for verification
+    if (!phone) {
+      setValidationError('⚠️ कृपया अपना या ग्राहक का मोबाइल नंबर दर्ज करें ताकि पेमेंट वेरिफाई हो सके।');
+      return;
+    }
+
+    if (!isFastAuto && (!utr || utr.length < 6)) {
+      setValidationError('⚠️ कृपया UPI ऐप से पेमेंट करने के बाद 12-अंकों का UTR / Transaction No. दर्ज करें या नीचे WhatsApp बटन से रसीद भेजें।');
+      return;
+    }
+
+    const finalUtr = utr || `UPI_CONFIRMED_${Date.now().toString().slice(-8)}`;
+
+    setIsProcessing(true);
 
     // 1. Immediately send customer order data to Backend Server (server/data/db.json)
     try {
@@ -97,17 +116,17 @@ export default function PricingModal({
           planName: selectedPlan.name,
           amount: selectedPlan.price,
           category: selectedPlan.category,
-          utrNumber: utr,
+          utrNumber: finalUtr,
           customerPhone: phone,
           customerName: bizName,
           businessName: bizName,
           formData: formData,
-          fastRecharge: isFast1Click
+          status: 'Payment Confirmed & Verified',
+          timestamp: new Date().toISOString()
         })
       }).catch(err => console.warn("Backend payment push error:", err));
 
       if (formData.businessName) {
-        const backendHost = window.location.hostname || 'localhost';
         fetch(`http://${backendHost}:5000/api/profiles`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -115,7 +134,8 @@ export default function PricingModal({
             ...formData,
             paymentPlan: selectedPlan.name,
             paymentAmount: selectedPlan.price,
-            paymentUtr: utr
+            paymentUtr: finalUtr,
+            paymentStatus: 'Confirmed'
           })
         }).catch(err => console.warn("Backend profile sync error:", err));
       }
@@ -124,32 +144,32 @@ export default function PricingModal({
     }
 
     setTimeout(() => {
-      const res = activateRecharge(planId, utr);
+      const res = activateRecharge(selectedPlanId, finalUtr);
       setIsProcessing(false);
       fireCelebrationConfetti();
       playSuccessChime();
-      setSuccessMsg(`✓ बधाई हो! आपका ₹${res.plan.price} का रिचार्ज तुरंत सक्रिय हो गया है! सभी टूल्स अनलॉक हैं।`);
+      setSuccessMsg(`✓ बधाई हो! ₹${res.plan.price} का पेमेंट सफलतापूर्वक कन्फर्म हो गया है! (Ref: ${finalUtr})। आपका अकाउंट पूरी तरह एक्टिवेट हो गया है।`);
       setUtrInput('');
       if (onRechargeSuccess) {
         onRechargeSuccess(res.plan);
       }
-    }, 500);
+    }, 600);
   };
 
-  // Direct WhatsApp Receipt Sender
+  // Direct WhatsApp Receipt Sender to Owner (+91 7799587585)
   const handleSendWhatsAppReceipt = () => {
     playClickPop();
     const phone = customerPhone.trim() || formData.contactNumber || '—';
     const bizName = customerName.trim() || formData.businessName || '—';
     const utr = utrInput.trim() || 'अभी UPI से भेजा गया';
     
-    const msg = `*ALEXO STUDIO RECHARGE ORDER*\n\n` +
+    const msg = `*ALEXO STUDIO RECHARGE ORDER - PAYMENT CONFIRMATION*\n\n` +
       `🏢 *दुकान/बिज़नेस:* ${bizName}\n` +
-      `📞 *फोन नंबर:* ${phone}\n` +
+      `📞 *ग्राहक फोन:* ${phone}\n` +
       `💳 *प्लान:* ${selectedPlan.name} (₹${selectedPlan.price})\n` +
       `🔢 *UTR / Ref No:* ${utr}\n` +
       `🏦 *Fino UPI ID:* ${OFFICIAL_UPI_ID}\n\n` +
-      `कृपया मेरा प्रोफाइल एक्टिवेट करें और सर्वर पर रिकॉर्ड चेक करें।`;
+      `मैंने पेमेंट कर दिया है, कृपया सर्वर पर कन्फर्म करें और एक्टिवेट रखें।`;
 
     window.open(`https://wa.me/917799587585?text=${encodeURIComponent(msg)}`, '_blank');
   };
@@ -162,91 +182,101 @@ export default function PricingModal({
   const upiPaytm = `paytmmp://pay?${baseUpiParams}`;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden max-h-[94vh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-5">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden max-h-[95vh] flex flex-col">
         
-        {/* Modal Header */}
-        <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-amber-500/20">
-              <Zap className="w-6 h-6 fill-current" />
+        {/* Modal Header (Mobile-Friendly & Compact) */}
+        <div className="p-3.5 sm:p-5 bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-amber-500/20 shrink-0">
+              <Zap className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5">
-                  <span>डायरेक्ट फास्ट रिचार्ज (1-Click Quick Pay)</span>
-                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-400 text-slate-950">
-                    INSTANT UNLOCK
+                <h3 className="text-sm sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5">
+                  <span>ALEXO रिचार्ज व पेमेंट बोर्ड</span>
+                  <span className="text-[9px] sm:text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-400 text-slate-950">
+                    VERIFIED
                   </span>
                 </h3>
               </div>
-              <p className="text-xs text-slate-300">
-                सीधे UPI ऐप से पे करें या QR स्कैन करें • ₹499 (न्यूनतम) से ₹1499 (उच्चतम)
+              <p className="text-[10px] sm:text-xs text-slate-300">
+                Fino Bank UPI QR • ₹499 (न्यूनतम) से ₹1499 (उच्चतम) • सुरक्षित पेमेंट
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-5">
+        <div className="p-3 sm:p-6 overflow-y-auto flex-1 space-y-4">
           
           {/* Active Status Banner */}
           {currentStatus.isRecharged ? (
-            <div className="p-3.5 sm:p-4 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2.5">
+            <div className="p-3 sm:p-4 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between gap-2.5 text-xs">
+              <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                 <div>
-                  <span className="font-extrabold text-emerald-950 text-sm block">
+                  <span className="font-extrabold text-emerald-950 text-xs sm:text-sm block">
                     ✓ आपका रिचार्ज सक्रिय है ({currentStatus.plan.category} - ₹{currentStatus.plan.price})
                   </span>
-                  <span className="text-emerald-800">
-                    वैधता: <strong>{currentStatus.daysLeft} दिन शेष</strong> • सभी फीचर्स व Road Map स्टैम्प अनलॉक हैं।
+                  <span className="text-emerald-800 text-[11px]">
+                    वैधता: <strong>{currentStatus.daysLeft} दिन शेष</strong> • सभी टूल्स व Road GPS अनलॉक हैं।
                   </span>
                 </div>
               </div>
-              <span className="px-3 py-1 rounded-full bg-emerald-600 text-white font-bold text-[11px] shrink-0">
+              <span className="px-2.5 py-1 rounded-full bg-emerald-600 text-white font-bold text-[10px] shrink-0">
                 Active
               </span>
             </div>
           ) : (
-            <div className="p-3.5 sm:p-4 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between gap-3 text-xs text-amber-900">
-              <div className="flex items-center gap-2.5">
-                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+            <div className="p-3 sm:p-3.5 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between gap-2 text-xs text-amber-900">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600 shrink-0" />
                 <div>
                   <span className="font-extrabold text-amber-950 text-xs sm:text-sm block">
-                    रीचार्ज आवश्यक (Instant Fast Activation)
+                    रिचार्ज व वेरिफिकेशन आवश्यक
                   </span>
-                  <span className="text-amber-800 text-[11px] sm:text-xs">
-                    तुरंत नीचे दिए गए किसी भी UPI ऐप (GPay, PhonePe, Paytm) से पे करें और 1-क्लिक में शुरू करें।
+                  <span className="text-amber-800 text-[10px] sm:text-xs">
+                    ₹499 या अपनी पसंद का प्लान चुनें, पे करें और UTR कन्फर्म करके एक्टिवेट करें।
                   </span>
                 </div>
               </div>
-              <span className="hidden sm:inline-block px-2.5 py-1 rounded-full bg-amber-200 text-amber-900 font-extrabold text-[10px]">
-                FAST 1-CLICK
+              <span className="hidden sm:inline-block px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 font-extrabold text-[9px] shrink-0">
+                STEP-GATED
               </span>
             </div>
           )}
 
+          {/* Validation Alert */}
+          {validationError && (
+            <div className="p-3 bg-red-50 border border-red-300 rounded-2xl text-xs font-bold text-red-700 flex items-center gap-2 animate-fadeIn">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{validationError}</span>
+            </div>
+          )}
+
+          {/* Success Message Banner */}
           {successMsg && (
-            <div className="p-4 bg-emerald-600 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-md flex items-center gap-2 animate-fadeIn">
+            <div className="p-3.5 bg-emerald-600 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-md flex items-center gap-2 animate-fadeIn">
               <CheckCheck className="w-5 h-5 shrink-0" />
               <span>{successMsg}</span>
             </div>
           )}
 
-          {/* FAST DIRECT PLAN SWITCHER TABS (Top Bar for instant picking) */}
-          <div className="space-y-1.5">
-            <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider block">
-              1. तुरंत प्लान चुनें (Quick Select Plan):
+          {/* 1. FAST PLAN SELECTOR TABS (Optimized for Mobile Touch) */}
+          <div className="space-y-1">
+            <span className="text-[10px] sm:text-[11px] font-black text-slate-500 uppercase tracking-wider block">
+              1. प्लान चुनें (Select Plan):
             </span>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
               {RECHARGE_PLANS.map((plan) => {
                 const isSelected = selectedPlanId === plan.id;
                 return (
@@ -254,14 +284,14 @@ export default function PricingModal({
                     key={plan.id}
                     type="button"
                     onClick={() => handleDirectPlanSelect(plan.id)}
-                    className={`p-2.5 sm:p-3 rounded-2xl border-2 text-left transition-all relative ${
+                    className={`p-2 sm:p-3 rounded-2xl border-2 text-left transition-all relative ${
                       isSelected
                         ? 'border-blue-600 bg-blue-50/80 shadow-md shadow-blue-500/10'
-                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
                     }`}
                   >
                     {plan.popular && (
-                      <span className="absolute -top-2 right-2 px-1.5 py-0.2 rounded-md bg-blue-600 text-white text-[9px] font-black uppercase">
+                      <span className="absolute -top-2 right-1.5 px-1.5 py-0.2 rounded-md bg-blue-600 text-white text-[8px] font-black uppercase">
                         POPULAR
                       </span>
                     )}
@@ -275,11 +305,11 @@ export default function PricingModal({
                         {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-500 block truncate mt-0.5">
+                    <span className="text-[9px] sm:text-[10px] text-slate-600 block truncate mt-0.5 font-medium">
                       {plan.category.split('/')[0]}
                     </span>
-                    <span className="text-[9px] text-emerald-600 font-bold block">
-                      {plan.durationDays} दिन वैधता
+                    <span className="text-[8px] sm:text-[9px] text-emerald-600 font-bold block">
+                      {plan.durationDays} दिन
                     </span>
                   </button>
                 );
@@ -287,256 +317,181 @@ export default function PricingModal({
             </div>
           </div>
 
-          {/* Category-Wise Detailed Pricing Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {RECHARGE_PLANS.map((plan) => {
-              const isSelected = selectedPlanId === plan.id;
-
-              return (
-                <div
-                  key={plan.id}
-                  onClick={() => handleDirectPlanSelect(plan.id)}
-                  className={`p-4 rounded-3xl border-2 transition-all cursor-pointer flex flex-col justify-between relative ${
-                    isSelected
-                      ? 'border-blue-600 bg-blue-50/30 shadow-lg shadow-blue-500/10'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
-                >
-                  <div className="space-y-3">
-                    {/* Category Label */}
-                    <div>
-                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-blue-700 border border-slate-200 inline-block">
-                        {plan.category}
-                      </span>
-                      <h4 className="font-black text-xs sm:text-sm text-slate-900 pt-1">{plan.name}</h4>
-                    </div>
-
-                    {/* Price Tag */}
-                    <div className="flex items-baseline gap-2 pt-1 border-t border-slate-100">
-                      <span className="text-2xl sm:text-3xl font-black text-slate-950">₹{plan.price}</span>
-                      <span className="text-xs text-slate-400 line-through">₹{plan.originalPrice}</span>
-                      <span className="text-[10px] font-bold text-emerald-600">
-                        {Math.round(((plan.originalPrice - plan.price) / plan.originalPrice) * 100)}% OFF
-                      </span>
-                    </div>
-
-                    {/* Features List */}
-                    <ul className="space-y-1.5 text-[11px] text-slate-600 border-t border-slate-100 pt-2.5">
-                      {plan.features.slice(0, 3).map((feat, i) => (
-                        <li key={i} className="flex items-start gap-1.5">
-                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                          <span className="leading-tight">{feat}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  {/* Direct Fast Pay Button inside card */}
-                  <div className="mt-4 pt-2.5 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDirectPlanSelect(plan.id);
-                      }}
-                      className={`w-full py-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 ${
-                        isSelected
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                          : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
-                      }`}
-                    >
-                      <Zap className="w-3.5 h-3.5 text-amber-400 fill-current" />
-                      <span>{isSelected ? `चयनित (₹${plan.price})` : `₹${plan.price} चुनें`}</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* OFFICIAL FINO BANK QR & DIRECT FAST RECHARGE ACTION BOX */}
-          <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white p-4 sm:p-6 rounded-3xl shadow-xl border border-slate-800 space-y-5">
+          {/* 2. OFFICIAL FINO BANK QR & DIRECT PAYMENT CONTAINER */}
+          <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white p-3.5 sm:p-5 rounded-3xl shadow-xl border border-slate-800 space-y-4">
             
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
               
               {/* QR Image Column (5 cols) */}
               <div className="md:col-span-5 flex flex-col items-center text-center">
-                <div className="relative p-3 bg-white rounded-3xl shadow-2xl border-4 border-amber-400 inline-block">
+                <div className="relative p-2.5 sm:p-3 bg-white rounded-3xl shadow-2xl border-4 border-amber-400 inline-block">
                   <img
                     src={OFFICIAL_QR_PATH}
                     alt="Fino Bank UPI Payment QR Code"
-                    className="w-44 h-44 sm:w-52 sm:h-52 object-contain rounded-2xl"
+                    className="w-40 h-40 sm:w-48 sm:h-48 object-contain rounded-2xl"
                   />
-                  <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-amber-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-md whitespace-nowrap">
+                  <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-amber-500 text-slate-950 text-[9px] sm:text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-md whitespace-nowrap">
                     ₹{selectedPlan.price} का भुगतान करें
                   </div>
                 </div>
-                <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-300 font-bold">
+                <div className="mt-2.5 flex items-center gap-1.5 text-xs text-amber-300 font-bold">
                   <QrCode className="w-4 h-4 text-amber-400" />
                   <span>Fino Bank Official QR</span>
                 </div>
-                <span className="text-[10px] text-slate-400 mt-0.5">
-                  किसी भी UPI स्कैनर से तुरंत स्कैन करें
+                <span className="text-[9px] text-slate-400">
+                  GPay • PhonePe • Paytm • किसी भी UPI से स्कैन करें
                 </span>
               </div>
 
-              {/* Fast Payment Launchers & Customer Activation (7 cols) */}
-              <div className="md:col-span-7 space-y-3.5 text-left">
+              {/* Payment Details & Verification Form (7 cols) */}
+              <div className="md:col-span-7 space-y-3 text-left">
                 
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between border-b border-white/10 pb-2">
                   <div>
-                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
-                      चयनित प्लान: {selectedPlan.category}
+                    <span className="text-[9px] sm:text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+                      प्लान: {selectedPlan.category}
                     </span>
-                    <h4 className="text-xl sm:text-2xl font-black text-white">
+                    <h4 className="text-lg sm:text-xl font-black text-white">
                       भुगतान राशि: <span className="text-emerald-400">₹{selectedPlan.price}</span>
                     </h4>
                   </div>
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-white/10 text-slate-300 border border-white/15">
-                    {selectedPlan.durationDays} दिन
+                  <span className="text-[10px] font-bold px-2 py-1 rounded-xl bg-white/10 text-slate-200 border border-white/15">
+                    {selectedPlan.durationDays} दिन वैधता
                   </span>
                 </div>
 
-                {/* DIRECT UPI APP 1-CLICK LAUNCH BUTTONS */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider flex items-center gap-1">
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>सीधे अपने फोन के UPI ऐप से पे करें (1-Click Direct Pay):</span>
+                {/* Direct UPI App 1-Click Launchers (Mobile Friendly) */}
+                <div className="space-y-1">
+                  <span className="text-[9px] sm:text-[10px] font-black text-amber-300 uppercase tracking-wider flex items-center gap-1">
+                    <Smartphone className="w-3 h-3" />
+                    <span>सीधे फोन में UPI ऐप खोलें:</span>
                   </span>
                   
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                    {/* Google Pay */}
+                  <div className="grid grid-cols-4 gap-1 sm:gap-1.5">
                     <a
                       href={upiGPay}
                       onClick={() => playClickPop()}
-                      className="p-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95 group"
+                      className="p-1.5 sm:p-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95"
                     >
-                      <span className="text-xs font-black group-hover:text-amber-300">Google Pay</span>
-                      <span className="text-[9px] text-slate-300">GPay Direct</span>
+                      <span className="text-[11px] sm:text-xs font-black">GPay</span>
+                      <span className="text-[8px] text-slate-300">Direct</span>
                     </a>
 
-                    {/* PhonePe */}
                     <a
                       href={upiPhonePe}
                       onClick={() => playClickPop()}
-                      className="p-2 rounded-xl bg-purple-900/40 hover:bg-purple-900/60 border border-purple-500/30 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95 group"
+                      className="p-1.5 sm:p-2 rounded-xl bg-purple-900/50 hover:bg-purple-900/70 border border-purple-500/30 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95"
                     >
-                      <span className="text-xs font-black text-purple-200 group-hover:text-purple-100">PhonePe</span>
-                      <span className="text-[9px] text-purple-300">PhonePe Direct</span>
+                      <span className="text-[11px] sm:text-xs font-black text-purple-200">PhonePe</span>
+                      <span className="text-[8px] text-purple-300">Direct</span>
                     </a>
 
-                    {/* Paytm */}
                     <a
                       href={upiPaytm}
                       onClick={() => playClickPop()}
-                      className="p-2 rounded-xl bg-cyan-900/40 hover:bg-cyan-900/60 border border-cyan-500/30 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95 group"
+                      className="p-1.5 sm:p-2 rounded-xl bg-cyan-900/50 hover:bg-cyan-900/70 border border-cyan-500/30 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95"
                     >
-                      <span className="text-xs font-black text-cyan-200 group-hover:text-cyan-100">Paytm</span>
-                      <span className="text-[9px] text-cyan-300">Paytm Direct</span>
+                      <span className="text-[11px] sm:text-xs font-black text-cyan-200">Paytm</span>
+                      <span className="text-[8px] text-cyan-300">Direct</span>
                     </a>
 
-                    {/* Universal BHIM/UPI */}
                     <a
                       href={upiIntentUniversal}
                       onClick={() => playClickPop()}
-                      className="p-2 rounded-xl bg-emerald-900/40 hover:bg-emerald-900/60 border border-emerald-500/30 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95 group"
+                      className="p-1.5 sm:p-2 rounded-xl bg-emerald-900/50 hover:bg-emerald-900/70 border border-emerald-500/30 text-white flex flex-col items-center justify-center text-center transition-all active:scale-95"
                     >
-                      <span className="text-xs font-black text-emerald-200 group-hover:text-emerald-100">All UPI</span>
-                      <span className="text-[9px] text-emerald-300">Any UPI App</span>
+                      <span className="text-[11px] sm:text-xs font-black text-emerald-200">Any UPI</span>
+                      <span className="text-[8px] text-emerald-300">All Apps</span>
                     </a>
                   </div>
                 </div>
 
-                {/* Official UPI ID with 1-Click Copy */}
-                <div className="p-3 rounded-2xl bg-white/10 border border-white/15 space-y-1">
-                  <span className="text-[10px] text-slate-300 font-bold uppercase block">
-                    Official Fino Bank UPI ID:
-                  </span>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-black text-amber-300 text-xs sm:text-sm break-all">
+                {/* Official UPI ID with Copy */}
+                <div className="p-2 sm:p-2.5 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-[9px] text-slate-300 font-bold block uppercase">
+                      Fino Bank UPI ID:
+                    </span>
+                    <span className="font-mono font-black text-amber-300 text-xs sm:text-sm truncate block">
                       {OFFICIAL_UPI_ID}
                     </span>
-                    <button
-                      type="button"
-                      onClick={handleCopyUpi}
-                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-1 transition-all shrink-0 active:scale-95"
-                    >
-                      {copiedUpi ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedUpi ? 'कॉपी हुआ!' : 'कॉपी करें'}</span>
-                    </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyUpi}
+                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-1 transition-all shrink-0 active:scale-95"
+                  >
+                    {copiedUpi ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedUpi ? 'कॉपी हुआ!' : 'कॉपी करें'}</span>
+                  </button>
                 </div>
 
-                {/* Customer Details Form */}
+                {/* Customer Details Form (Phone is Mandatory) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-white/10">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-300 mb-0.5">
-                      दुकान / ग्राहक का नाम:
+                      दुकान का नाम:
                     </label>
                     <input
                       type="text"
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                       placeholder="उदा: शर्मा प्रोविजन स्टोर"
-                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-400"
                     />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-300 mb-0.5">
-                      ग्राहक का फोन नंबर:
+                      ग्राहक का मोबाइल नंबर <span className="text-amber-400">*</span>:
                     </label>
                     <input
                       type="tel"
+                      required
                       value={customerPhone}
                       onChange={(e) => setCustomerPhone(e.target.value)}
                       placeholder="उदा: 9876543210"
-                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-400 font-mono"
                     />
                   </div>
                 </div>
 
-                {/* FAST 1-CLICK INSTANT ACTIVATE ACTION (Primary Fast Option) */}
-                <div className="pt-1 space-y-2">
+                {/* 12-Digit UTR Input Field */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-200 mb-0.5">
+                    पेमेंट के बाद 12-अंकों का UTR / Ref No. दर्ज करें:
+                  </label>
+                  <input
+                    type="text"
+                    value={utrInput}
+                    onChange={(e) => setUtrInput(e.target.value)}
+                    placeholder="उदा: 432890128471 (GPay/PhonePe से 12 डिजिट)"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-400 font-mono"
+                  />
+                </div>
+
+                {/* PAYMENT CONFIRMATION ACTIONS */}
+                <div className="space-y-2 pt-1">
+                  {/* Primary: Confirm Payment with UTR */}
                   <button
                     type="button"
                     disabled={isProcessing}
-                    onClick={() => handleConfirmRecharge(selectedPlanId, true)}
-                    className="w-full py-3 px-4 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-600 hover:to-teal-500 text-slate-950 font-black text-sm rounded-2xl shadow-xl shadow-emerald-500/25 transition-all flex items-center justify-center gap-2 active:scale-95 border border-emerald-300"
+                    onClick={() => handleConfirmRecharge(false)}
+                    className="w-full py-2.5 px-4 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-600 hover:to-teal-500 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 active:scale-95 border border-emerald-300"
                   >
-                    <Zap className="w-5 h-5 fill-current text-slate-950" />
+                    <CheckCheck className="w-4 h-4 text-slate-950" />
                     <span>
-                      {isProcessing ? 'सत्यापित हो रहा है...' : `⚡ 1-क्लिक तुरंत एक्टिवेट करें (Fast Unlock ₹${selectedPlan.price})`}
+                      {isProcessing ? 'पेमेंट कन्फर्म हो रहा है...' : `पेमेंट कन्फर्म करें (₹${selectedPlan.price} एक्टिवेट करें)`}
                     </span>
                   </button>
 
-                  {/* Optional UTR input toggle / field */}
-                  <div className="flex gap-1.5 items-center">
-                    <input
-                      type="text"
-                      value={utrInput}
-                      onChange={(e) => setUtrInput(e.target.value)}
-                      placeholder="वैकल्पिक: 12-अंक UTR नंबर (यदि आपके पास है)"
-                      className="flex-1 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-amber-400 font-mono"
-                    />
-                    {utrInput && (
-                      <button
-                        type="button"
-                        onClick={() => handleConfirmRecharge(selectedPlanId, false)}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shrink-0"
-                      >
-                        UTR सेव करें
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Send Direct WhatsApp Confirmation Button */}
+                  {/* Secondary: Instant WhatsApp Receipt & Verification */}
                   <button
                     type="button"
                     onClick={handleSendWhatsAppReceipt}
-                    className="w-full py-2 px-3 bg-emerald-600/80 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border border-emerald-400/30 active:scale-95"
+                    className="w-full py-2 px-3 bg-emerald-700/80 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border border-emerald-400/30 active:scale-95"
                   >
                     <MessageCircle className="w-3.5 h-3.5 text-emerald-200" />
-                    <span>WhatsApp पर रसीद भेजें (+91 7799587585) →</span>
+                    <span>WhatsApp पर रसीद भेजकर तुरंत कन्फर्म करवाएं (+91 7799587585) →</span>
                   </button>
                 </div>
 

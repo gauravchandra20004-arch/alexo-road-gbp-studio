@@ -1,11 +1,29 @@
 import React, { useState } from 'react';
-import { Building2, Phone, Mail, Globe, Clock, MapPin, Plus, X, AlertCircle } from 'lucide-react';
-import { GBP_CATEGORIES } from '../data/categories';
+import { Building2, Phone, Mail, Globe, Clock, MapPin, Plus, X, AlertCircle, Sparkles, Check, CheckCheck } from 'lucide-react';
+import { GBP_CATEGORIES, getSuggestedServicesForCategory } from '../data/categories';
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export default function StepBusinessInfo({ formData, updateFormData, onNext }) {
   const [newService, setNewService] = useState('');
+
+  // Live category-wise suggested services
+  const suggestedServices = getSuggestedServicesForCategory(formData.primaryCategory);
+
+  const handleToggleSuggested = (service) => {
+    const currentServices = formData.services || [];
+    if (currentServices.includes(service)) {
+      updateFormData({ services: currentServices.filter(s => s !== service) });
+    } else {
+      updateFormData({ services: [...currentServices, service] });
+    }
+  };
+
+  const handleAddAllSuggested = () => {
+    const current = new Set(formData.services || []);
+    suggestedServices.forEach(s => current.add(s));
+    updateFormData({ services: Array.from(current) });
+  };
 
   const handleDayToggle = (day) => {
     const currentDays = formData.openDays || [];
@@ -241,41 +259,103 @@ export default function StepBusinessInfo({ formData, updateFormData, onNext }) {
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-              मुख्य सेवाएं / प्रोडक्ट्स (Services Offered)
-            </label>
-            <div className="flex flex-wrap gap-2 mb-2">
-              {(formData.services || []).map((srv, idx) => (
-                <span
-                  key={idx}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 text-slate-800 text-xs font-medium rounded-full border border-slate-200"
-                >
-                  {srv}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveService(srv)}
-                    className="hover:text-red-500"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
+          <div className="space-y-3 pt-1">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                मुख्य सेवाएं / प्रोडक्ट्स (Services Offered)
+              </label>
+              <span className="text-[11px] text-purple-700 font-bold">
+                {(formData.services || []).length} सेवाएं चुनी गईं
+              </span>
             </div>
 
-            <form onSubmit={handleAddService} className="flex gap-2">
+            {/* LIVE CATEGORY-WISE SMART SUGGESTIONS BOX */}
+            <div className="p-3.5 bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-purple-50/90 rounded-2xl border border-blue-200/80 space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                  <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                  <span>
+                    कैटेगरी <strong>"{formData.primaryCategory}"</strong> के लिए सुझाई गई लाइव सेवाएं:
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddAllSuggested}
+                  className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-purple-700 hover:text-purple-900 bg-white px-3 py-1 rounded-xl border border-purple-200 shadow-xs active:scale-95 shrink-0 self-start sm:self-auto"
+                >
+                  <CheckCheck className="w-3.5 h-3.5 text-purple-600" />
+                  <span>✨ सभी {suggestedServices.length} सेवाएं जोड़ें</span>
+                </button>
+              </div>
+
+              {/* Interactive suggestion chips */}
+              <div className="flex flex-wrap gap-1.5">
+                {suggestedServices.map((srv, idx) => {
+                  const isAdded = (formData.services || []).includes(srv);
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleToggleSuggested(srv)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-xl transition-all border active:scale-95 ${
+                        isAdded
+                          ? 'bg-purple-600 text-white border-purple-600 font-bold shadow-xs'
+                          : 'bg-white text-slate-700 hover:bg-purple-50 hover:text-purple-900 border-slate-300 hover:border-purple-300'
+                      }`}
+                    >
+                      {isAdded ? <Check className="w-3 h-3 text-white" /> : <Plus className="w-3 h-3 text-purple-600" />}
+                      <span>{srv}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Current Selected Services Pills */}
+            <div>
+              <span className="text-[11px] font-bold text-slate-500 mb-1.5 block">
+                चयनित सेवाएं (Selected Services):
+              </span>
+              <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2 bg-slate-50 rounded-2xl border border-slate-200/90">
+                {(formData.services || []).length === 0 ? (
+                  <span className="text-xs text-slate-400 italic py-1 px-1">
+                    अभी कोई सेवा नहीं चुनी गई है। ऊपर से क्लिक करके या नीचे लिखकर जोड़ें।
+                  </span>
+                ) : (
+                  (formData.services || []).map((srv, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-white text-slate-800 text-xs font-semibold rounded-full border border-slate-300 shadow-2xs animate-fadeIn"
+                    >
+                      <span>{srv}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveService(srv)}
+                        className="p-0.5 text-slate-400 hover:text-red-600 transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Custom Service Input Form */}
+            <form onSubmit={handleAddService} className="flex gap-2 pt-1">
               <input
                 type="text"
                 value={newService}
                 onChange={(e) => setNewService(e.target.value)}
-                placeholder="नयी सेवा लिखें (उदा: Home Delivery, AC Repair)..."
-                className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                placeholder="अन्य कोई कस्टम सेवा लिखें (उदा: Home Delivery, AC Repair)..."
+                className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
               />
               <button
                 type="submit"
-                className="px-4 py-2 bg-purple-50 text-purple-700 rounded-xl text-sm font-semibold hover:bg-purple-100 border border-purple-200 flex items-center gap-1"
+                className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl text-xs sm:text-sm font-bold hover:from-purple-700 hover:to-indigo-700 border border-purple-500 flex items-center gap-1.5 shrink-0 shadow-sm active:scale-95"
               >
-                <Plus className="w-4 h-4" /> जोड़ें
+                <Plus className="w-4 h-4" />
+                <span>+ जोड़ें</span>
               </button>
             </form>
           </div>
